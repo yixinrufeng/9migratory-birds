@@ -459,4 +459,3 @@ print("Done.")
 print(f"Per-sample result: {out_tsv}")
 print(f"Group-total result: {out_group}")
 print(f"Log: {out_log}")
-PY
