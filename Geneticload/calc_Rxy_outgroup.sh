@@ -416,4 +416,3 @@ print(f"Log:    {log_file}")
 if sums["intergenic"]["xy"] == 0 or sums["intergenic"]["yx"] == 0:
     print("WARNING: intergenic denominator is zero. R values will be NA.")
     print("Check whether your VCF contains intergenic_region annotations.")
-PY
