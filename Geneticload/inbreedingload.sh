@@ -648,4 +648,3 @@ print("Output files:")
 print("  " + per_sample_out)
 print("  " + group_out)
 print("  " + log_out)
-PY
