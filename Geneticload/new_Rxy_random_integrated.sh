@@ -13,16 +13,20 @@ set -euo pipefail
 #     output_prefix
 #
 # Example:
-#   STRICT_DERIVED_ALT=1 \
-#   N_REP=100 \
-#   N_SITES=1000000 \
-#   SEED=12345 \
-#   bash run_Rxy_random_integrated.sh \
-#     all.snpeff.ann.vcf.gz \
-#     Grey-tailed.txt \
-#     Common_Snipe.txt \
-#     outgroup.txt \
-#     Grey_vs_Common
+#!/bin/bash
+#STRICT_DERIVED_ALT=1 \
+#REQUIRE_NO_MISSING=1 \
+#SAMPLE_WITH_REPLACEMENT=0 \
+#N_REP=100 \
+#N_SITES=40000000 \
+#SEED=12345 \
+#./run_Rxy_random_integrated.sh \
+#  /raid6/bird/wpc/project/mke/09snpeff/02anno/all.snpeff.ann.vcf \
+#  Spoon-billed.txt \
+#  Red-necked.txt \
+#  outgroup.txt \
+#  Spoon_vs_Red
+
 #
 # Optional environment variables:
 #   STRICT_DERIVED_ALT=1          default: 1
