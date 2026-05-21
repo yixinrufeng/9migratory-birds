@@ -3,7 +3,7 @@
 #extract vcf that include outgroup
 for i in all
 do
-        vcftools --vcf /raid6/bird/wpc/project/mke/09snpeff/02anno/all.snpeff.ann.vcf --keep ./$i --recode --recode-INFO-all --out $i
+        vcftools --vcf /path/all.snpeff.ann.vcf --keep ./$i --recode --recode-INFO-all --out $i
         vcftools --vcf ./$i.recode.vcf --recode --recode-INFO-all --max-missing 1.0 --out $i.nomissing
         bcftools norm -m -any $i.nomissing.recode.vcf -Oz -o xx.split.vcf.gz
         bcftools index xx.split.vcf.gz
