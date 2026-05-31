@@ -330,6 +330,14 @@ function (void)applyRegulatedFitnessScaling(object<Subpopulation>$ pop, numeric$
         sim.setValue("meanFitness", NAN);
 }}
 
+function (void)enforcePopulationCeiling(object<Subpopulation>$ pop, integer$ maxN)
+{{
+    if (pop.individualCount > maxN) {{
+        nRemove = pop.individualCount - maxN;
+        sim.killIndividuals(pop.sampleIndividuals(nRemove));
+    }}
+}}
+
 function (void)applyFutureCeilingFitnessScaling(object<Subpopulation>$ pop, numeric$ Kceiling)
 {{
     inds = pop.individuals;
@@ -499,10 +507,36 @@ survival()
         else if (sim.getValue("phase") == "future")
             applyFutureCeilingFitnessScaling(p3, FUTURE_K_CEILING);
     }}
+	if ((sim.cycle % BURNIN_PROGRESS_INTERVAL) == 0) {{
+        nP1 = -1;
+        nP3 = -1;
+
+        if (exists("p1"))
+            nP1 = p1.individualCount;
+
+        if (exists("p3"))
+            nP3 = p3.individualCount;
+
+        catn("tick=" + sim.cycle +
+             ", phase=" + sim.getValue("phase") +
+             ", N_p1=" + nP1 +
+             ", N_p3=" + nP3 +
+             ", mutations=" + size(sim.mutations) +
+             ", substitutions=" + size(sim.substitutions));
+    }}
+}}
+
+2:{burnin_generations - 1} late()
+{{
+    if (exists("p1") & (sim.getValue("phase") == "burnin"))
+        enforcePopulationCeiling(p1, ANCESTRAL_N);
 }}
 
 {burnin_generations} late()
 {{
+    // Hard ceiling for p1 before drawing founders.
+    enforcePopulationCeiling(p1, ANCESTRAL_N);
+
     nFounders = min(c(CURRENT_N, p1.individualCount));
 
     sim.addSubpop("p3", 0, sexRatio=0.5);
@@ -524,8 +558,17 @@ survival()
          ", future K ceiling=" + FUTURE_K_CEILING);
 }}
 
+{burnin_generations + 1}:{burnin_generations + CURRENT_PHASE_GENERATIONS - 1} late()
+{{
+    if (exists("p3") & (sim.getValue("phase") == "current"))
+        enforcePopulationCeiling(p3, CURRENT_N);
+}}
+
 {burnin_generations + CURRENT_PHASE_GENERATIONS} late()
 {{
+    // Hard ceiling for p3 at the end of the current phase.
+    enforcePopulationCeiling(p3, CURRENT_N);
+
     // Future starts from the current p3 size.
     // FUTURE_K_CEILING is only an upper carrying-capacity ceiling,
     // not an initial population size and not a lower-bound target.
@@ -547,6 +590,11 @@ survival()
 {{
     if (sim.getValue("phase") != "future")
         return;
+
+    // Hard ceiling in the future phase:
+    // if p3 exceeds FUTURE_K_CEILING after reproduction/survival,
+    // randomly remove excess individuals.
+    enforcePopulationCeiling(p3, FUTURE_K_CEILING);
 
     futureGen = sim.getValue("futureGen") + 1;
     sim.setValue("futureGen", futureGen);
