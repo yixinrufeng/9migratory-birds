@@ -11,9 +11,13 @@ Current version:
   0.25x, 0.5x, 1x, 2x, 5x, and 10x current_N
 - future phase has no lower-bound rescue: when N is below the ceiling,
   pop.fitnessScaling remains 1.0
+- adult breeding probability is drawn from N(0.8, 0.1) truncated to [0, 1]
+- each egg has a 0.39 probability of becoming a recruited offspring
 - neutral mutations are simulated
 - neutral : deleterious mutation ratio = 1 : 2.31
 - deleterious nonsynonymous mutations follow the Kyriazis-style DFE
+- individuals are age-structured; one SLiM cycle represents one year
+- annual age-specific survival is applied via individual fitnessScaling
 
 Run:
     python3 generate_bird_slim5_models_K_ceiling.py
@@ -64,7 +68,9 @@ RECOMBINATION_RATE = 1.0e-9
 NEUTRAL_WEIGHT = 1.0
 DELETERIOUS_TO_NEUTRAL_RATIO = 2.31
 
-ADULT_REPRODUCTION_PROBABILITY = 0.7
+ADULT_REPRODUCTION_PROBABILITY_MEAN = 0.8
+ADULT_REPRODUCTION_PROBABILITY_SD = 0.1
+CLUTCH_TO_ADULT_PROBABILITY = 0.39
 DISASTER_ALPHA = 0.5
 DISASTER_BETA = 8.0
 
@@ -224,7 +230,9 @@ initialize() {{
     defineConstant("RECOMBINATION_RATE", {RECOMBINATION_RATE});
     defineConstant("ROH_CUTOFF_BP", {ROH_CUTOFF_BP});
 
-    defineConstant("ADULT_REPRO_PROB", {ADULT_REPRODUCTION_PROBABILITY});
+    defineConstant("ADULT_REPRO_PROB_MEAN", {ADULT_REPRODUCTION_PROBABILITY_MEAN});
+    defineConstant("ADULT_REPRO_PROB_SD", {ADULT_REPRODUCTION_PROBABILITY_SD});
+    defineConstant("CLUTCH_TO_ADULT_PROB", {CLUTCH_TO_ADULT_PROBABILITY});
     defineConstant("DISASTER_ALPHA", {DISASTER_ALPHA});
     defineConstant("DISASTER_BETA", {DISASTER_BETA});
     defineConstant("LIFE_TABLE", {eidos_vector(life)});
@@ -298,6 +306,30 @@ mutation(m5) {{
     return T;
 }}
 
+function (float)ageSurvivalForIndividuals(object<Individual> inds)
+{{
+    // Annual age-specific survival probability for each individual.
+    // In this age-structured nonWF model, one SLiM cycle represents one year.
+    // Offspring are age 0 by default, and individual age increases automatically
+    // by one at the end of each cycle.
+    if (size(inds) == 0)
+        return c();
+
+    ages = inds.age;
+    ages[ages > MAX_LIFESPAN] = MAX_LIFESPAN;
+
+    mortality = LIFE_TABLE[ages];
+    return 1.0 - mortality;
+}}
+
+function (float$)meanAgeSurvivalForIndividuals(object<Individual> inds)
+{{
+    if (size(inds) == 0)
+        return NAN;
+
+    return mean(ageSurvivalForIndividuals(inds));
+}}
+
 function (void)applyRegulatedFitnessScaling(object<Subpopulation>$ pop, numeric$ targetN)
 {{
     inds = pop.individuals;
@@ -307,11 +339,7 @@ function (void)applyRegulatedFitnessScaling(object<Subpopulation>$ pop, numeric$
         return;
     }}
 
-    ages = inds.age;
-    ages[ages > MAX_LIFESPAN] = MAX_LIFESPAN;
-
-    mortality = LIFE_TABLE[ages];
-    age_survival = 1.0 - mortality;
+    age_survival = ageSurvivalForIndividuals(inds);
     inds.fitnessScaling = age_survival;
 
     denom = pop.individualCount * mean(age_survival);
@@ -347,11 +375,7 @@ function (void)applyFutureCeilingFitnessScaling(object<Subpopulation>$ pop, nume
         return;
     }}
 
-    ages = inds.age;
-    ages[ages > MAX_LIFESPAN] = MAX_LIFESPAN;
-
-    mortality = LIFE_TABLE[ages];
-    age_survival = 1.0 - mortality;
+    age_survival = ageSurvivalForIndividuals(inds);
     inds.fitnessScaling = age_survival;
 
     // Future phase: upper carrying-capacity ceiling only.
@@ -403,16 +427,75 @@ function (float$)meanHetAcrossChromosomesForIndividuals(object<Individual> inds)
     return totalHet / totalLength;
 }}
 
+
+function (float)mutationClassCountsForIndividuals(object<Individual> inds)
+{{
+    if (size(inds) == 0)
+        return c(NAN, NAN, NAN, NAN, NAN, NAN, NAN);
+
+    neutralCounts = c();
+    weakDelCounts = c();
+    moderateDelCounts = c();
+    strongDelCounts = c();
+    veryStrongDelCounts = c();
+    lethalDelCounts = c();
+    totalDelCounts = c();
+
+    for (ind in inds) {{
+        muts = c();
+
+        for (chr in sim.chromosomes) {{
+            haps = ind.haplosomesForChromosomes(chr, includeNulls=F);
+            muts = c(muts, haps.mutations);
+        }}
+
+        if (size(muts) == 0) {{
+            neutralCounts = c(neutralCounts, 0);
+            weakDelCounts = c(weakDelCounts, 0);
+            moderateDelCounts = c(moderateDelCounts, 0);
+            strongDelCounts = c(strongDelCounts, 0);
+            veryStrongDelCounts = c(veryStrongDelCounts, 0);
+            lethalDelCounts = c(lethalDelCounts, 0);
+            totalDelCounts = c(totalDelCounts, 0);
+            next;
+        }}
+
+        nNeutral = sum(muts.mutationType == m1);
+        nWeak = sum(muts.mutationType == m2);
+        nModerate = sum(muts.mutationType == m3);
+        nStrong = sum(muts.mutationType == m4);
+        nVeryStrong = sum(muts.mutationType == m5);
+        nLethal = sum(muts.mutationType == m6);
+        nTotalDel = nWeak + nModerate + nStrong + nVeryStrong + nLethal;
+
+        neutralCounts = c(neutralCounts, nNeutral);
+        weakDelCounts = c(weakDelCounts, nWeak);
+        moderateDelCounts = c(moderateDelCounts, nModerate);
+        strongDelCounts = c(strongDelCounts, nStrong);
+        veryStrongDelCounts = c(veryStrongDelCounts, nVeryStrong);
+        lethalDelCounts = c(lethalDelCounts, nLethal);
+        totalDelCounts = c(totalDelCounts, nTotalDel);
+    }}
+
+    return c(mean(neutralCounts),
+             mean(weakDelCounts),
+             mean(moderateDelCounts),
+             mean(strongDelCounts),
+             mean(veryStrongDelCounts),
+             mean(lethalDelCounts),
+             mean(totalDelCounts));
+}}
+
 function (void)writeHeader(void)
 {{
-    header = "gen\\tKceiling\\tpopSize\\tsampledN\\tmeanHet\\tFROH\\tmeanFitness";
+    header = "gen\\tKceiling\\tpopSize\\tsampledN\\tmeanHet\\tFROH\\tmeanFitness\\tmeanNeutralMutCount\\tmeanWeakDelCount\\tmeanModerateDelCount\\tmeanStrongDelCount\\tmeanVeryStrongDelCount\\tmeanLethalDelCount\\tmeanTotalDelCount";
     writeFile(OUT_FILE, header, append=F);
 }}
 
 function (void)logStats(integer$ futureGen, object<Subpopulation>$ pop)
 {{
     if (pop.individualCount == 0) {{
-        line = paste(c(futureGen, FUTURE_K_CEILING, 0, 0, NAN, NAN, NAN), sep="\\t");
+        line = paste(c(futureGen, FUTURE_K_CEILING, 0, 0, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN), sep="\\t");
         writeFile(OUT_FILE, line, append=T);
         return;
     }}
@@ -429,13 +512,16 @@ function (void)logStats(integer$ futureGen, object<Subpopulation>$ pop)
     sampleFitness = pop.cachedFitness(sampledInds.index);
     meanFitness = mean(sampleFitness);
 
+    mutationCounts = mutationClassCountsForIndividuals(sampledInds);
+
     line = paste(c(futureGen,
                    FUTURE_K_CEILING,
                    pop.individualCount,
                    nSample,
                    meanHet,
                    meanFroh,
-                   meanFitness), sep="\\t");
+                   meanFitness,
+                   mutationCounts), sep="\\t");
 
     writeFile(OUT_FILE, line, append=T);
 }}
@@ -452,7 +538,12 @@ reproduction(NULL, "F")
 
     fit = max(c(0.0, fit));
 
-    p_repro = ADULT_REPRO_PROB * min(c(1.0, fit));
+    // Adult breeding probability is drawn for each adult female in each year
+    // from a normal distribution with mean 0.8 and SD 0.1, truncated to [0, 1].
+    baseReproProb = rnorm(1, ADULT_REPRO_PROB_MEAN, ADULT_REPRO_PROB_SD);
+    baseReproProb = min(c(1.0, max(c(0.0, baseReproProb))));
+
+    p_repro = baseReproProb * min(c(1.0, fit));
 
     if (runif(1) > p_repro)
         return;
@@ -465,8 +556,14 @@ reproduction(NULL, "F")
     clutch = asInteger(round(rnorm(1, CLUTCH_MEAN, CLUTCH_SD)));
     clutch = max(c(0, clutch));
 
-    if (clutch > 0)
-        subpop.addCrossed(individual, mate, count=clutch);
+    if (clutch > 0) {{
+        // Convert clutch size into recruited offspring entering the simulated population.
+        // Each egg has probability CLUTCH_TO_ADULT_PROB (=0.39) of becoming a recruited individual.
+        nRecruits = rbinom(1, clutch, CLUTCH_TO_ADULT_PROB);
+
+        if (nRecruits > 0)
+            subpop.addCrossed(individual, mate, count=nRecruits);
+    }}
 }}
 
 survival()
@@ -661,9 +758,11 @@ def main() -> None:
     print("No lower-bound rescue is applied when future N is below the ceiling.")
     print(f"Current phase generations: {CURRENT_PHASE_GENERATIONS}")
     print(f"Future output interval: every {LOG_INTERVAL} generations")
+    print("Adult breeding probability: N(0.8, 0.1), truncated to [0, 1].")
+    print("Each egg has probability 0.39 of becoming a recruited offspring.")
     print("Neutral mutations are simulated; neutral:deleterious = 1:2.31.")
+    print("Age-specific annual survival is applied through LIFE_TABLE and individual fitnessScaling.")
 
 
 if __name__ == "__main__":
     main()
-
