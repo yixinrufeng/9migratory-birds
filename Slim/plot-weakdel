@@ -1,0 +1,191 @@
+library(readr)
+library(dplyr)
+
+# ============================================================
+# 1. 基本设置
+# ============================================================
+
+base_dir <- "D:/project/project/22-苗可儿-鹬类/Slim"
+result_file <- "spoon.K_2x.tsv"
+rep_ids <- 1:100
+
+gen_range <- 1:500
+
+# 四个路径和对应颜色
+scenario_info <- data.frame(
+  scenario = c("spoon9", "spoon75", "spoon50", "spoon25"),
+  colour = c("#B379B4", "#02AFAC", "#FBEB66", "#8B96AD"),
+  stringsAsFactors = FALSE
+)
+
+# ============================================================
+# 2. 读取所有情景和重复的数据
+#    文件不存在：跳过该 bootstrap
+#    文件存在：缺失 gen / NA / NaN / Inf 补为 0
+# ============================================================
+
+data_list <- list()
+idx <- 1
+
+for (i in seq_len(nrow(scenario_info))) {
+  
+  scenario <- scenario_info$scenario[i]
+  work_dir <- file.path(base_dir, scenario)
+  
+  for (rep_id in rep_ids) {
+    
+    file <- file.path(
+      work_dir,
+      as.character(rep_id),
+      "slim_results",
+      result_file
+    )
+    
+    # 如果文件不存在，直接跳过这个 bootstrap
+    if (!file.exists(file)) {
+      warning(paste0("文件不存在，跳过该 bootstrap：", file))
+      next
+    }
+    
+    # 建立完整 gen 框架
+    full_gen <- data.frame(gen = gen_range)
+    
+    data_raw <- read_tsv(file, show_col_types = FALSE) %>%
+      mutate(
+        gen = as.numeric(gen),
+        meanWeakDelCount = as.numeric(meanWeakDelCount),
+        meanNeutralMutCount = as.numeric(meanNeutralMutCount)
+      ) %>%
+      filter(
+        gen >= min(gen_range),
+        gen <= max(gen_range),
+        is.finite(gen)
+      ) %>%
+      mutate(
+        meanWeakDelCount = ifelse(is.finite(meanWeakDelCount), meanWeakDelCount, 0),
+        meanNeutralMutCount = ifelse(is.finite(meanNeutralMutCount), meanNeutralMutCount, 0)
+      ) %>%
+      group_by(gen) %>%
+      summarise(
+        meanWeakDelCount = mean(meanWeakDelCount, na.rm = TRUE),
+        meanNeutralMutCount = mean(meanNeutralMutCount, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    # 对于已经存在的文件，补齐 gen = 1:500
+    # 缺失的 gen 对应两个参数都补为 0
+    data_one <- full_gen %>%
+      left_join(data_raw, by = "gen") %>%
+      mutate(
+        meanWeakDelCount = ifelse(is.finite(meanWeakDelCount), meanWeakDelCount, 0),
+        meanNeutralMutCount = ifelse(is.finite(meanNeutralMutCount), meanNeutralMutCount, 0),
+        
+        # 每个 bootstrap 内部先计算 weak deleterious / neutral 的比例
+        weak_neutral_ratio = ifelse(
+          meanNeutralMutCount > 0,
+          meanWeakDelCount / meanNeutralMutCount,
+          NA_real_
+        ),
+        
+        scenario = scenario,
+        rep_id = rep_id
+      )
+    
+    data_list[[idx]] <- data_one
+    idx <- idx + 1
+  }
+}
+
+data_all <- bind_rows(data_list)
+
+# ============================================================
+# 3. 计算每个 scenario 每个 gen 的 ratio 均值和 95% CI
+#    如果某个 gen 的有效 ratio 数值少于 5，则不计算
+# ============================================================
+
+summary_data <- data_all %>%
+  group_by(scenario, gen) %>%
+  summarise(
+    n = sum(is.finite(weak_neutral_ratio)),
+    
+    ratio_mean = ifelse(
+      n >= 5,
+      mean(weak_neutral_ratio, na.rm = TRUE),
+      NA_real_
+    ),
+    
+    ratio_sd = ifelse(
+      n >= 5,
+      sd(weak_neutral_ratio, na.rm = TRUE),
+      NA_real_
+    ),
+    
+    ratio_se = ratio_sd / sqrt(n),
+    
+    ci_low = ratio_mean - qt(0.975, df = n - 1) * ratio_se,
+    ci_high = ratio_mean + qt(0.975, df = n - 1) * ratio_se,
+    
+    .groups = "drop"
+  ) %>%
+  filter(
+    is.finite(ratio_mean),
+    is.finite(ci_low),
+    is.finite(ci_high)
+  )
+
+# ============================================================
+# 4. 作图：ratio 均值线 + 95% CI 阴影
+# ============================================================
+
+plot(
+  NA,
+  xlim = c(min(gen_range), max(gen_range)),
+  ylim = c(0, 6),
+  xlab = "Generation",
+  ylab = "meanweakDelCount / meanNeutralMutCount",
+  main = "weakdeleterious / neutral mutation ratio with 95% confidence intervals"
+)
+
+for (i in seq_len(nrow(scenario_info))) {
+  
+  scenario <- scenario_info$scenario[i]
+  col_line <- scenario_info$colour[i]
+  col_ci <- adjustcolor(col_line, alpha.f = 0.20)
+  
+  data_plot <- summary_data %>%
+    filter(scenario == !!scenario) %>%
+    arrange(gen)
+  
+  if (nrow(data_plot) == 0) {
+    warning(paste0("没有足够数据用于绘图：", scenario))
+    next
+  }
+  
+  # 画 95% CI 阴影
+  polygon(
+    x = c(data_plot$gen, rev(data_plot$gen)),
+    y = c(data_plot$ci_low, rev(data_plot$ci_high)),
+    col = col_ci,
+    border = NA
+  )
+  
+  # 画 ratio 均值线
+  lines(
+    x = data_plot$gen,
+    y = data_plot$ratio_mean,
+    col = col_line,
+    lwd = 2.5
+  )
+}
+
+# ============================================================
+# 5. 添加图例
+# ============================================================
+
+legend(
+  "bottomright",
+  legend = scenario_info$scenario,
+  col = scenario_info$colour,
+  lwd = 2.5,
+  bty = "n"
+)
